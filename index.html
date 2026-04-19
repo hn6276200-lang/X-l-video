@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Export Tool</title>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #0f0f0f; color: #eee; margin: 0; padding: 15px; }
+        .card { background: #1e1e1e; border-radius: 12px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h3 { margin-top: 0; color: #4ade80; text-align: center; }
+        
+        #video-container { 
+            position: relative; width: 100%; max-width: 100%; margin: 15px 0; 
+            background: #000; border-radius: 8px; overflow: hidden;
+        }
+        video { width: 100%; display: block; }
+        
+        #selection-box {
+            position: absolute; border: 2px solid #f87171; background: rgba(248, 113, 113, 0.3);
+            display: none; pointer-events: none; z-index: 10;
+        }
+
+        .controls { display: flex; flex-direction: column; gap: 10px; margin-top: 15px; }
+        input[type="file"] { background: #333; padding: 10px; border-radius: 6px; font-size: 14px; }
+        
+        button { 
+            background: #22c55e; color: white; border: none; padding: 15px; 
+            border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer;
+        }
+        button:disabled { background: #444; color: #888; }
+        
+        #log-container { 
+            margin-top: 15px; background: #000; border: 1px solid #333; 
+            padding: 10px; border-radius: 6px; font-family: monospace; font-size: 11px;
+            height: 100px; overflow-y: auto; color: #4ade80;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h3>XUẤT VIDEO SẠCH</h3>
+    
+    <input type="file" id="uploader" accept="video/*">
+    
+    <div id="video-container">
+        <div id="selection-box"></div>
+        <video id="input-video" playsinline controls></video>
+    </div>
+
+    <div class="controls">
+        <button id="process-btn">XỬ LÝ & XUẤT FILE .MP4</button>
+        <div id="log-container">Trạng thái: Đang đợi file...</div>
+    </div>
+</div>
+
+<script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    // Cấu hình không log để tiết kiệm RAM điện thoại
+    const ffmpeg = createFFmpeg({ log: false });
+    
+    const video = document.getElementById('input-video');
+    const box = document.getElementById('selection-box');
+    const uploader = document.getElementById('uploader');
+    const log = document.getElementById('log-container');
+    const btn = document.getElementById('process-btn');
+
+    let rect = { x: 0, y: 0, w: 0, h: 0 };
+
+    function addLog(msg) {
+        const div = document.createElement('div');
+        div.textContent = `> ${msg}`;
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    // Nạp video
+    uploader.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            video.src = URL.createObjectURL(file);
+            addLog("Đã nạp file: " + file.name);
+            box.style.display = 'none';
+        }
+    };
+
+    // Vẽ vùng chọn (Touch)
+    let isDrawing = false;
+    let startX, startY;
+
+    video.parentElement.ontouchstart = (e) => {
+        isDrawing = true;
+        const r = video.getBoundingClientRect();
+        startX = e.touches[0].clientX - r.left;
+        startY = e.touches[0].clientY - r.top;
+        box.style.display = 'block';
+        box.style.left = startX + 'px';
+        box.style.top = startY + 'px';
+        box.style.width = '0px';
+        box.style.height = '0px';
+    };
+
+    video.parentElement.ontouchmove = (e) => {
+        if (!isDrawing) return;
+        const r = video.getBoundingClientRect();
+        let curX = e.touches[0].clientX - r.left;
+        let curY = e.touches[0].clientY - r.top;
+        rect.w = Math.abs(curX - startX);
+        rect.h = Math.abs(curY - startY);
+        rect.x = Math.min(curX, startX);
+        rect.y = Math.min(curY, startY);
+
+        box.style.width = rect.w + 'px';
+        box.style.height = rect.h + 'px';
+        box.style.left = rect.x + 'px';
+        box.style.top = rect.y + 'px';
+    };
+
+    video.parentElement.ontouchend = () => isDrawing = false;
+
+    // Tiến trình xuất file
+    btn.onclick = async () => {
+        if (!video.src || rect.w < 5) {
+            alert("Vui lòng khoanh vùng cần xóa trước!");
+            return;
+        }
+
+        btn.disabled = true;
+        addLog("Đang nạp bộ máy xử lý...");
+
+        try {
+            if (!ffmpeg.isLoaded()) await ffmpeg.load();
+
+            // Tính tỷ lệ thực tế
+            const sX = video.videoWidth / video.offsetWidth;
+            const sY = video.videoHeight / video.offsetHeight;
+            const rx = Math.round(rect.x * sX);
+            const ry = Math.round(rect.y * sY);
+            const rw = Math.round(rect.w * sX);
+            const rh = Math.round(rect.h * sY);
+
+            addLog("Bắt đầu mã hóa video...");
+            ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(video.src));
+
+            // Lệnh xóa chữ và xuất file
+            await ffmpeg.run('-i', 'input.mp4', '-vf', `delogo=x=${rx}:y=${ry}:w=${rw}:h=${rh}`, 'output.mp4');
+
+            addLog("Mã hóa thành công! Đang xuất file...");
+            const data = ffmpeg.FS('readFile', 'output.mp4');
+            const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+            
+            // Tải file xuống
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "video_clean.mp4";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            addLog("ĐÃ XUẤT FILE HOÀN TẤT.");
+        } catch (err) {
+            addLog("LỖI: " + err.message);
+            addLog("Gợi ý: Thử dùng Chrome 'Trang web cho máy tính'.");
+        }
+        btn.disabled = false;
+    };
+</script>
+
+</body>
+</html>
